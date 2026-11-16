@@ -87,12 +87,14 @@
 
   <div class="card">
     <div class="drop" id="drop">
-      <p><strong>Tap to take a photo or choose an image</strong></p>
+     <p><strong>Tap to choose an image from your gallery</strong></p>
       <p>or drag and drop a receipt here (JPG, PNG, WEBP, max 10 MB)</p>
     </div>
-    <input type="file" id="file" accept="image/*" capture="environment" hidden>
+   <input type="file" id="file" accept="image/*" hidden>
+<input type="file" id="camera" accept="image/*" capture="environment" hidden>
     <img id="preview" alt="Receipt preview">
     <div class="row">
+      <button class="ghost" id="cameraBtn" type="button">📷 Take photo</button>
       <button id="go" disabled>Extract data</button>
       <button id="clear" class="ghost" disabled>Clear</button>
       <div class="spinner" id="spinner"></div>
@@ -143,6 +145,9 @@
   const $ = (id) => document.getElementById(id);
   const drop = $("drop"), fileInput = $("file"), preview = $("preview");
   const goBtn = $("go"), clearBtn = $("clear"), spinner = $("spinner"), errorBox = $("error");
+    const cameraInput = $("camera");
+  $("cameraBtn").addEventListener("click", () => cameraInput.click());
+  cameraInput.addEventListener("change", () => setFile(cameraInput.files[0]));
   let selectedFile = null;
   let lastResult = null;
 
@@ -162,12 +167,29 @@
   function reset() {
     selectedFile = null;
     fileInput.value = "";
+    cameraInput.value = "";
     preview.style.display = "none";
     preview.removeAttribute("src");
     goBtn.disabled = true;
     clearBtn.disabled = true;
     $("results").style.display = "none";
     hideError();
+  }
+    // Shrink and convert to JPEG: faster uploads, fixes HEIC, fixes rotation.
+  async function compressImage(file, maxSide = 2000, quality = 0.85) {
+    try {
+      const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+      const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(bitmap.width * scale);
+      canvas.height = Math.round(bitmap.height * scale);
+      canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+      return blob || file;
+    } catch {
+      return file; // if the browser can't process it, send the original
+    }
   }
 
   function showError(msg) { errorBox.textContent = msg; errorBox.style.display = "block"; }
@@ -190,8 +212,9 @@
     goBtn.disabled = true;
     spinner.style.display = "block";
     try {
-      const form = new FormData();
-      form.append("file", selectedFile);
+     const form = new FormData();
+      const upload = await compressImage(selectedFile);
+      form.append("file", upload, "receipt.jpg");
       const res = await fetch(`${API_URL}/extract`, { method: "POST", body: form });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
