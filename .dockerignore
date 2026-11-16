@@ -1,0 +1,11 @@
+venv/
+.venv/
+.env
+.git
+__pycache__/
+*.pyc
+tests/
+frontend/
+sample.jpg
+try_*.py
+list_models.py
