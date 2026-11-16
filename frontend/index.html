@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Receipt Extractor</title>
+<style>
+  :root {
+    --bg: #f6f7fb; --card: #ffffff; --text: #1b1f2a; --muted: #6b7280;
+    --border: #e3e6ee; --accent: #4f46e5; --accent-hover: #4338ca;
+    --danger: #b42318; --danger-bg: #fef3f2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1117; --card: #181b24; --text: #eceef4; --muted: #9aa1b2;
+      --border: #2a2e3b; --accent: #7c75ff; --accent-hover: #918bff;
+      --danger: #ff8a80; --danger-bg: #2a1716;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { margin: 0 0 4px; font-size: 1.8rem; }
+  .tag { color: var(--muted); margin: 0 0 24px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px; margin-bottom: 20px;
+  }
+  .drop {
+    border: 2px dashed var(--border); border-radius: 12px; padding: 32px 16px;
+    text-align: center; cursor: pointer; color: var(--muted);
+    transition: border-color .15s, background .15s;
+  }
+  .drop.over, .drop:hover { border-color: var(--accent); background: rgba(79,70,229,.05); }
+  .drop strong { color: var(--text); }
+  #preview { display: none; max-width: 100%; max-height: 360px; margin: 16px auto 0; border-radius: 10px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  button {
+    font: inherit; border: 0; border-radius: 10px; padding: 10px 18px;
+    cursor: pointer; background: var(--accent); color: #fff; font-weight: 600;
+  }
+  button:hover:not(:disabled) { background: var(--accent-hover); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.ghost {
+    background: transparent; color: var(--text); border: 1px solid var(--border);
+  }
+  button.ghost:hover:not(:disabled) { background: var(--bg); }
+  .error {
+    display: none; background: var(--danger-bg); color: var(--danger);
+    border-radius: 10px; padding: 12px 14px; margin-top: 16px;
+  }
+  .spinner {
+    display: none; width: 18px; height: 18px; border-radius: 50%;
+    border: 3px solid var(--border); border-top-color: var(--accent);
+    animation: spin .8s linear infinite; align-self: center;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #results { display: none; }
+  .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .meta div span { display: block; font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .meta div b { font-size: 1rem; word-break: break-word; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .totals { margin-top: 12px; margin-left: auto; max-width: 260px; }
+  .totals div { display: flex; justify-content: space-between; padding: 3px 0; }
+  .totals .grand { font-weight: 700; font-size: 1.15rem; border-top: 2px solid var(--border); margin-top: 6px; padding-top: 8px; }
+  details { margin-top: 16px; }
+  summary { cursor: pointer; color: var(--muted); }
+  pre {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px; overflow: auto; max-height: 320px; font-size: .85rem;
+  }
+  .empty { color: var(--muted); padding: 8px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🧾 Smart Receipt Extractor</h1>
+  <p class="tag">Snap a receipt. Get clean, structured data.</p>
+
+  <div class="card">
+    <div class="drop" id="drop">
+      <p><strong>Tap to take a photo or choose an image</strong></p>
+      <p>or drag and drop a receipt here (JPG, PNG, WEBP, max 10 MB)</p>
+    </div>
+    <input type="file" id="file" accept="image/*" capture="environment" hidden>
+    <img id="preview" alt="Receipt preview">
+    <div class="row">
+      <button id="go" disabled>Extract data</button>
+      <button id="clear" class="ghost" disabled>Clear</button>
+      <div class="spinner" id="spinner"></div>
+    </div>
+    <div class="error" id="error"></div>
+  </div>
+
+  <div class="card" id="results">
+    <div class="meta">
+      <div><span>Merchant</span><b id="m-name">-</b></div>
+      <div><span>Date</span><b id="m-date">-</b></div>
+      <div><span>Payment</span><b id="m-pay">-</b></div>
+      <div><span>Address</span><b id="m-addr">-</b></div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Item</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Total</th></tr>
+        </thead>
+        <tbody id="items"></tbody>
+      </table>
+    </div>
+    <div class="totals" id="totals"></div>
+
+    <div class="row">
+      <button class="ghost" id="copy">Copy JSON</button>
+      <button class="ghost" id="download">Download JSON</button>
+    </div>
+
+    <details>
+      <summary>Raw OCR text</summary>
+      <pre id="raw"></pre>
+    </details>
+    <details>
+      <summary>JSON output</summary>
+      <pre id="json"></pre>
+    </details>
+  </div>
+</div>
+
+<script>
+  // Local dev talks to your local server. After deploying, put your Render URL here.
+  const PROD_API_URL = "https://YOUR-APP.onrender.com";
+  const isLocal = ["localhost", "127.0.0.1", ""].includes(location.hostname);
+  const API_URL = isLocal ? "http://127.0.0.1:8000" : PROD_API_URL;
+
+  const $ = (id) => document.getElementById(id);
+  const drop = $("drop"), fileInput = $("file"), preview = $("preview");
+  const goBtn = $("go"), clearBtn = $("clear"), spinner = $("spinner"), errorBox = $("error");
+  let selectedFile = null;
+  let lastResult = null;
+
+  function setFile(file) {
+    if (!file || !file.type.startsWith("image/")) {
+      showError("Please choose an image file.");
+      return;
+    }
+    selectedFile = file;
+    preview.src = URL.createObjectURL(file);
+    preview.style.display = "block";
+    goBtn.disabled = false;
+    clearBtn.disabled = false;
+    hideError();
+  }
+
+  function reset() {
+    selectedFile = null;
+    fileInput.value = "";
+    preview.style.display = "none";
+    preview.removeAttribute("src");
+    goBtn.disabled = true;
+    clearBtn.disabled = true;
+    $("results").style.display = "none";
+    hideError();
+  }
+
+  function showError(msg) { errorBox.textContent = msg; errorBox.style.display = "block"; }
+  function hideError() { errorBox.style.display = "none"; }
+
+  drop.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => setFile(fileInput.files[0]));
+  ["dragenter", "dragover"].forEach((e) =>
+    drop.addEventListener(e, (ev) => { ev.preventDefault(); drop.classList.add("over"); })
+  );
+  ["dragleave", "drop"].forEach((e) =>
+    drop.addEventListener(e, (ev) => { ev.preventDefault(); drop.classList.remove("over"); })
+  );
+  drop.addEventListener("drop", (ev) => setFile(ev.dataTransfer.files[0]));
+  clearBtn.addEventListener("click", reset);
+
+  goBtn.addEventListener("click", async () => {
+    if (!selectedFile) return;
+    hideError();
+    goBtn.disabled = true;
+    spinner.style.display = "block";
+    try {
+      const form = new FormData();
+      form.append("file", selectedFile);
+      const res = await fetch(`${API_URL}/extract`, { method: "POST", body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
+      lastResult = data;
+      render(data);
+    } catch (err) {
+      const offline = err instanceof TypeError;
+      showError(offline
+        ? "Could not reach the server. Is the API running?"
+        : err.message);
+    } finally {
+      spinner.style.display = "none";
+      goBtn.disabled = false;
+    }
+  });
+
+  function money(v, cur) {
+    if (v === null || v === undefined) return "-";
+    const n = Number(v).toFixed(2);
+    return cur ? `${cur} ${n}` : n;
+  }
+
+  function render(data) {
+    const r = data.receipt;
+    const cur = r.currency;
+    $("m-name").textContent = r.merchant_name || "-";
+    $("m-date").textContent = [r.date, r.time].filter(Boolean).join(" ") || "-";
+    $("m-pay").textContent = r.payment_method || "-";
+    $("m-addr").textContent = r.merchant_address || "-";
+
+    const tbody = $("items");
+    tbody.innerHTML = "";
+    if (!r.items.length) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 4; td.className = "empty"; td.textContent = "No line items found.";
+      tr.appendChild(td); tbody.appendChild(tr);
+    }
+    r.items.forEach((it) => {
+      const tr = document.createElement("tr");
+      const cells = [
+        [it.name, ""],
+        [it.quantity, "num"],
+        [money(it.unit_price), "num"],
+        [money(it.total_price), "num"],
+      ];
+      cells.forEach(([text, cls]) => {
+        const td = document.createElement("td");
+        td.textContent = text; // textContent keeps OCR/LLM text from running as HTML
+        if (cls) td.className = cls;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+
+    const totals = $("totals");
+    totals.innerHTML = "";
+    [["Subtotal", r.subtotal], ["Tax", r.tax], ["Tip", r.tip]].forEach(([label, v]) => {
+      if (v !== null && v !== undefined) addTotal(totals, label, money(v, cur));
+    });
+    addTotal(totals, "Total", money(r.total, cur), true);
+
+    $("raw").textContent = data.raw_text;
+    $("json").textContent = JSON.stringify(data.receipt, null, 2);
+    $("results").style.display = "block";
+    $("results").scrollIntoView({ behavior: "smooth" });
+  }
+
+  function addTotal(parent, label, value, grand) {
+    const div = document.createElement("div");
+    if (grand) div.className = "grand";
+    const a = document.createElement("span"); a.textContent = label;
+    const b = document.createElement("span"); b.textContent = value;
+    div.append(a, b);
+    parent.appendChild(div);
+  }
+
+  $("copy").addEventListener("click", async (e) => {
+    if (!lastResult) return;
+    await navigator.clipboard.writeText(JSON.stringify(lastResult.receipt, null, 2));
+    e.target.textContent = "Copied!";
+    setTimeout(() => (e.target.textContent = "Copy JSON"), 1500);
+  });
+
+  $("download").addEventListener("click", () => {
+    if (!lastResult) return;
+    const blob = new Blob([JSON.stringify(lastResult.receipt, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "receipt.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+</script>
+</body>
+</html>
